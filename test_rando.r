@@ -176,7 +176,7 @@ simpleRando(patientList, allTreatments) %>%
 # Example illustration of an unbalanced randomization
 # Sample A,B 100 times unsing unbalanced probs, repeat 1000 times and check histogram of number of As
 replicate(1000, 
-          sample(treatments, 100, replace=T, prob = c(0.6, 0.4))  %>% 
+          sample(c("A", "B"), 100, replace=T, prob = c(0.6, 0.4))  %>% 
             as.vector() %>% 
             table() %>% 
             pluck(1) ) %>% 
@@ -184,9 +184,32 @@ replicate(1000,
   ggplot( aes(x=value) ) +
   geom_histogram( binwidth = 1 )
 
+#################### FONCTIONS UTILES???
+
+# Function to get all unique values of a given column in a data frame
+allUniqueValues <- function(df, col) {
+  col <- enquo(col)
+  
+  df %>%
+    dplyr::pull(!!col) %>% 
+    unique() 
+}
+
+allUniqueValues(patientList_test, Treatment)
+allUniqueValues(patientList_test, stratFactor2)
+
+test <- patientList_test %>% 
+  complete( Treatment, stratFactor1, stratFactor2 ) %>% 
+  group_by( Treatment, stratFactor1, stratFactor2 ) %>%
+  summarise(non_na_count = sum(!is.na(patientID))) 
+
+
 ################ TEST DATA (from Levy and Blood article)
 
-# Tabel of already included patients
+# Create complete DF of all possible combinations of stratification factors + treatments 
+allCases <- crossing(stratFactor1 = c("5", "6"),stratFactor2 = c("3", "4"), Treatment=c("A", "B"))
+
+# Table of already included patients
 patientList_test <- tribble(
   ~Treatment, ~patientID, ~stratFactor1, ~stratFactor2,
   "B", "11001", "6", "4",
@@ -207,67 +230,124 @@ patientList_test <- tribble(
   "B", "11016", "5", "4"
 )
 
-# Function to get all unique values of a given column in a data frame
-allUniqueValues <- function(df, col) {
-  col <- enquo(col)
-
-  df %>%
-    dplyr::pull(!!col) %>% 
-    unique() 
-}
-
-allUniqueValues(patientList_test, Treatment)
-allUniqueValues(patientList_test, stratFactor2)
-
-test <- patientList_test %>% 
-  complete( Treatment, stratFactor1, stratFactor2 ) %>% 
-  group_by( Treatment, stratFactor1, stratFactor2 ) %>%
-  summarise(non_na_count = sum(!is.na(patientID))) 
+# Useful to test if it works even early in the study (not all combinations have been seen) 
+patientList_test <- patientList_test[1,] 
+  
 
 # New patient for which to determine best treatment allocation
 newPatient_test <- data_frame( patientID = "11017", stratFactor1 = "5",  stratFactor2 = "3")
 
-
-
 # Table of treatment allocation probabilities
-treatmentAllocationProbs_test <- tribble(
-  ~Treatment, ~Weight, 
-  c("A", "B"), c(0.5, 0.5)
-) %>%  unnest()
+treatmentAllocationProbs_test <- 
+  tribble(
+    ~Treatment, ~Weight, 
+    c( "A", "B" ), c( 0.5, 0.5 ) 
+  ) %>%  
+  unnest()
+
+# Create Table 3 - Breakdown of patient list before randomization 
+# of new patient (complete with cases not seen before)
+TAB3_test <- allCases %>% 
+  left_join(patientList_test) %>% 
+  gather( key = "key", value = "value", -patientID, -Treatment ) %>% 
+  group_by( Treatment, key, value ) %>% 
+  summarise( n = sum(!is.na(patientID) ) )
+
+ComputePatientListBreakdown <- function(allCases, patientList) {
+  allCases %>% 
+    left_join(patientList, by = names(allCases)) %>% 
+    gather( key = "key", value = "value", -patientID, -Treatment ) %>% 
+    group_by( Treatment, key, value ) %>% 
+    summarise( n = sum(!is.na(patientID) ) )
+}
 
 
-# Create Table 3
-TAB3_test <- patientList_test %>% 
-  gather(key, value, -patientID, -Treatment) %>% 
-  group_by(Treatment, key, value) %>% 
-  count()  
-#  unite( key, value, col = "stratFactor", sep="_") 
+patientListBreakdown <- ComputePatientListBreakdown(allCases, patientList_test)
+identical(patientListBreakdown, TAB3_test)
 
-# Create Table 4
+# Create Table 4 - filter table 3 with stratification factors equal to new patient
 TAB4_test <- newPatient_test %>% 
-  select(-patientID) %>% 
-  gather(key = "key", value = "value") %>% 
-  left_join(TAB3_test, by=c('key', 'value'))
-
-# Create Table 10
-TAB_expected_test  %>% 
-  crossing(newTreatment=c("A", "B")) %>% 
-  mutate( n_new = ifelse(Treatment == newTreatment, n+1, n) ) %>% 
-  mutate( diff = n_new - expected ) %>%
-  arrange(newTreatment, key) %>% 
-  group_by(newTreatment, key) %>% 
-  summarise( dist_range = abs(max(diff)-min(diff)), dist_var = var(diff), dist_max = max(diff) )  %>% 
-  summarise( imbalanceScore_range = sum(dist_range), imbalanceScore_var = sum(dist_var), imbalanceScore_max = sum(dist_max),)
+  select( -patientID ) %>% 
+  gather( key = "key", value = "value" ) %>% 
+  left_join( TAB3_test, by = c( "key", "value" ) )
 
 
-crossing(stratFactor1 = c("5", "6"),stratFactor2 = c("3", "4"), Treatment=c("A", "B"))
-
-
-# Create Tables 7 and 8
+# Create Tables 7 and 8 - expected values only
 TAB_expected_test <- TAB4_test %>% 
-  group_by(key) %>% 
-  mutate( tot = sum(n) ) %>% 
-  left_join(treatmentAllocationProbs_test, by = "Treatment") %>% 
-  mutate( expected = (tot+1) * Weight )
+  group_by( key ) %>% 
+  mutate( tot_byStratFactor = sum( n ) ) %>% 
+  left_join( treatmentAllocationProbs_test, by = "Treatment") %>% 
+  mutate( expected = ( tot_byStratFactor + 1 ) * Weight )
+
+ComputeExpectedValues <- function(newPatient, patientListBreakdown) {
+  
+  newPatient %>% 
+    select( -patientID ) %>% 
+    gather( key = "key", value = "value" ) %>% 
+    left_join( patientListBreakdown, by = c( "key", "value" ) ) %>% 
+    group_by( key ) %>% 
+    mutate( tot_byStratFactor = sum( n ) ) %>% 
+    left_join( treatmentAllocationProbs_test, by = "Treatment") %>% 
+    mutate( expected = ( tot_byStratFactor + 1 ) * Weight )
+  
+}
+
+ExpectedValues <- ComputeExpectedValues(newPatient_test, patientListBreakdown)
+identical(ExpectedValues, TAB_expected_test)
+
+
+# Create Table 10 - differences observed-expected, distances (3 methods) and 
+# imbalance scores (3 methods)
+TAB10_test <- TAB_expected_test  %>% 
+  crossing( newTreatment = c("A", "B") ) %>% 
+  mutate( n_new = ifelse(Treatment == newTreatment, n + 1, n) ) %>% 
+  mutate( diff = n_new - expected ) %>%
+  group_by( newTreatment, key ) %>% 
+  summarise( dist_range = max(diff)-min(diff), 
+          dist_var = var(diff) * ( n() - 1 ) / n(), 
+          dist_max = max(diff) )  %>% 
+  summarise( imbalanceScore_range = sum(dist_range), 
+          imbalanceScore_var = sum(dist_var), 
+          imbalanceScore_max = sum(dist_max)) 
+
+ComputeImbalanceScores <- function(ExpectedValues, allTreatments) {
+  
+  ExpectedValues  %>% 
+    crossing( newTreatment = allTreatments ) %>% 
+    mutate( n_new = ifelse(Treatment == newTreatment, n + 1, n) ) %>% 
+    mutate( diff = n_new - expected ) %>%
+    group_by( newTreatment, key ) %>% 
+    summarise( dist_range = max(diff)-min(diff), 
+               dist_var = var(diff) * ( n() - 1 ) / n(), 
+               dist_max = max(diff) )  %>% 
+    summarise( imbalanceScore_range = sum(dist_range), 
+               imbalanceScore_var = sum(dist_var), 
+               imbalanceScore_max = sum(dist_max)) 
+  
+}
+
+ImbalanceScores <- ComputeImbalanceScores(ExpectedValues, c("A", "B") )
+identical(ImbalanceScores, TAB10_test)
+
+
+# to check - do not summarise but mutate (keep data)
+TAB10_allData <- TAB_expected_test  %>% 
+  crossing( newTreatment = c("A", "B") ) %>% 
+  mutate( n_new = ifelse(Treatment == newTreatment, n + 1, n) ) %>% 
+  mutate( diff = n_new - expected ) %>%
+  group_by( newTreatment, key ) %>% 
+  mutate( dist_range = max(diff)-min(diff),
+          dist_var = var(diff) * ( n() - 1 ) / n(),
+          dist_max = max(diff) )  %>%
+  ungroup() %>%
+  group_by( newTreatment, Treatment ) %>%
+  mutate( imbalanceScore_range = sum(dist_range),
+          imbalanceScore_var = sum(dist_var),
+          imbalanceScore_max = sum(dist_max)) %>%
+  arrange( newTreatment, key )
+
+
+
+
 
 
