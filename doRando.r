@@ -25,18 +25,22 @@ library(tidyverse)
 # TODO :  must be returned as well
 set.seed(42)
 
-set.seed(NULL)
+# Reinitialize random seed
+# set.seed(NULL)
+
+# Load utility functions
+source("randoUtils.r")
 
 
 ###########################
 
 numberOfCenters <- 100
-allTreatments <- c("A", "B", "C")
+allTreatments <- c("A", "B")
 allCenters <- sprintf("Center%03d", as.numeric(1:numberOfCenters))
-allStages <- c("T3", "T4a", "T5")
-allEmergencyResections <- c("Yes", "No", "Maybe", "Whatever")
-samplingScheme <- c(2, 1, 1)
-allTreatmentsProbs <- samplingScheme / sum(samplingScheme)
+allStages <- c("T3", "T4a")
+allEmergencyResections <- c("Yes", "No")
+treatmentAllocationOdds <- c(2, 1)
+treatmentAllocationProbs_vec <- treatmentAllocationOdds / sum(treatmentAllocationOdds)
 
 # Create complete DF of all possible combinations of stratification factors + treatments 
 allCases <- 
@@ -47,21 +51,11 @@ allCases <-
     Treatment = allTreatments
     )
 
-# Generate a random list of n patients already allocated with a treatment 
-# Treatment are randomly allocated with unbalanced probs (not proper randomization but this is a start)
-
-samplePatients <- function( n = 1 ) {
-  tibble( 
-    Center = sample( allCenters, n, replace = TRUE ), 
-    Stage = sample( allStages, n, replace = TRUE  ), 
-    EmergencyResection = sample( allEmergencyResections, n, replace = TRUE  ),
-    Treatment = sample( allTreatments, n, replace = TRUE, prob = allTreatmentsProbs )
-  ) 
-}
-
 patientList <- 
-  samplePatients(100) %>% 
-  mutate(patientID = row_number()) 
+  samplePatients(allCases, 100) 
+
+patientList$Treatment <- sample( allTreatments, 100, replace = TRUE, prob = allTreatmentsProbs )
+
 
 ################################################################
 # Minimization algorithm - 2 treatments
@@ -72,137 +66,25 @@ patientList <-
 treatmentAllocationProbs <- 
   tribble(
     ~Treatment, ~Weight, 
-    allTreatments, allTreatmentsProbs
+    allTreatments, treatmentAllocationProbs_vec
   ) %>%  
   unnest()
 
 # Get weights for stratification factors into a vector for future use
-# TODO
+# TODO???
 
 # Create one new patient to be randomized
-newPatient <- samplePatients(1) %>% 
-  select(-Treatment) %>% 
-  mutate(patientID = nrow(patientList) + 1 )
+newPatient <- samplePatients(allCases, 1) 
 
-# Create table summarizing number of cases within each stratum of the 
-# stratification factors in the current patient list
-# DONE - the count should return zero for centers that are not used
-# DONE - this needs to be generalized to handle more stratif factors (using gather/spread?)
+ImbalanceScores <- patientList %>% 
+  ComputePatientListBreakdown(allCases, .) %>% 
+  ComputeExpectedValues(treatmentAllocationProbs, newPatient, .) %>% 
+  ComputeImbalanceScores(., allTreatments )
 
-# Create Table 3 - Breakdown of patient list before randomization 
-# of new patient (complete with cases not seen before)
-ComputePatientListBreakdown <- function(allCases, patientList) {
-  allCases %>% 
-    left_join(patientList, by = names(allCases)) %>% 
-    gather( key = "key", value = "value", -patientID, -Treatment ) %>% 
-    group_by( Treatment, key, value ) %>% 
-    summarise( n = sum(!is.na(patientID) ) )
-}
+# patientListBreakdown <- ComputePatientListBreakdown(allCases, patientList)
+# ExpectedValues <- ComputeExpectedValues(treatmentAllocationProbs, newPatient, patientListBreakdown)
+# ImbalanceScores <- ComputeImbalanceScores(ExpectedValues, allTreatments )
 
-patientListBreakdown <- ComputePatientListBreakdown(allCases, patientList)
-
-# Create Tables 7 and 8 - expected values only
-ComputeExpectedValues <- function(treatmentAllocationProbs, newPatient, patientListBreakdown) {
-  
-  newPatient %>% 
-    select( -patientID ) %>% 
-    gather( key = "key", value = "value" ) %>% 
-    left_join( patientListBreakdown, by = c( "key", "value" ) ) %>% 
-    group_by( key ) %>% 
-    mutate( tot_byStratFactor = sum( n ) ) %>% 
-    left_join( treatmentAllocationProbs, by = "Treatment") %>% 
-    mutate( expected = ( tot_byStratFactor + 1 ) * Weight )
-  
-}
-
-ExpectedValues <- ComputeExpectedValues(treatmentAllocationProbs, newPatient, patientListBreakdown)
-
-# Create Table 10 - differences observed-expected, distances (3 methods) and 
-# imbalance scores (3 methods)
-ComputeImbalanceScores <- function(ExpectedValues, allTreatments) {
-  
-  ExpectedValues  %>% 
-    crossing( newTreatment = allTreatments ) %>% 
-    mutate( n_new = ifelse(Treatment == newTreatment, n + 1, n) ) %>% 
-    mutate( diff = n_new - expected ) %>%
-    group_by( newTreatment, key ) %>% 
-    summarise( dist_range = max(diff)-min(diff), 
-               dist_var = var(diff) * ( n() - 1 ) / n(), 
-               dist_max = max(diff) )  %>% 
-    summarise( imbalanceScore_range = sum(dist_range), 
-               imbalanceScore_var = sum(dist_var), 
-               imbalanceScore_max = sum(dist_max)) 
-  
-}
-
-ImbalanceScores <- ComputeImbalanceScores(ExpectedValues, allTreatments )
-
-# Select treatment 
-# Method BEST : assign treatment with lowest imbalance score
-# Method PROB : assign treatment with lowest imbalance score, using fixed probabilities
-# Method PROP : assign treatment with lowest imbalance score, using probabilities 
-#               based on imbalance score values
-selectTreatment <- function(ImbalanceScores, dist_method, choice_method) {
-  
-  dist_colName <- 
-    case_when(
-      dist_method == "RANGE"  ~ "imbalanceScore_range",
-      dist_method == "VAR"  ~ "imbalanceScore_var",
-      dist_method == "MAX"  ~ "imbalanceScore_max",
-      TRUE ~ "UNKNOWN_COLNAME"
-    )
-
-  dist_colName <- enquo(dist_colName)
-    
-  reducedImbalanceScores <- ImbalanceScores %>% 
-    select( newTreatment, imbalanceScore = !!dist_colName )
-  
-  assignedTreatment <- "UNKNOWN"
-  
-  if (choice_method == "BEST") {
-    
-    # print("BEST method chosen")
-
-    assignedTreatment <- reducedImbalanceScores %>% 
-      filter( imbalanceScore == min(imbalanceScore) ) %>% 
-      dplyr::pull(newTreatment)
-
-  } else if (choice_method == "PROB") {
-    
-    # print("PROB method chosen")
-    
-    sortedTreatments <- ImbalanceScores %>% 
-      select(newTreatment, imbalanceScore = imbalanceScore_range) %>% 
-      arrange(imbalanceScore)  %>% 
-      dplyr::pull(newTreatment)
-    
-    assignedTreatment <- sample( sortedTreatments, 1, prob =  c(0.75, 0.25) )
-
-  } else if (choice_method == "PROP") {
-
-    # print("PROP method chosen")
-    
-    sortedImbalanceScores <- ImbalanceScores %>% 
-      select(newTreatment, imbalanceScore = imbalanceScore_range) %>% 
-      arrange(imbalanceScore)  
-      
-    sortedTreatments <- dplyr::pull(sortedImbalanceScores, newTreatment)
-    sortedScores <- dplyr::pull(sortedImbalanceScores, imbalanceScore)
-    
-    assignedTreatment <- sample( sortedTreatments, 
-                                 1, 
-                                 prob =  1 - sortedScores / sum(sortedScores) 
-                                 )
-
-  } else {
-    
-    print("Unknown method to choose treatment")
-    
-  }
-  
-  return(assignedTreatment)
-
-}
 
 # Test once
 allocatedNewPatient <- newPatient 
@@ -225,4 +107,89 @@ patientList %>%
 # It looks like the OLD patient list is not properly stratified. This is normal, as it has been 
 # randomly created without stratification!!! To create a properly randomized patient list, randomization
 # would need to be used incrementally to built the list
+
+######### Build a virtual trial by incrementally randomizing randomly sampled patients
+
+performOneTrial <- function(nPatients, dist_method, choice_method) {
+  
+  # Create first patient and allocate treatment randomly (using the predefined ratio ebtween treatment groups)
+  firstPatient_fullTrial <- samplePatients(allCases, 1) 
+  firstPatient_fullTrial$Treatment <- sample( allTreatments, 1, replace = TRUE, prob = allTreatmentsProbs )
+  
+  patientList_fullTrial <- firstPatient_fullTrial
+  
+  for (idx in 1:(nPatients-1)) {
+    
+    # Create new patient
+    newPatient_fullTrial <- samplePatients(allCases, 1) %>% 
+      mutate( patientID = max(patientList_fullTrial$patientID) + 1 )
+    
+    # Compute imabalance scores for new patient
+    ImbalanceScores <- patientList_fullTrial %>% 
+      ComputePatientListBreakdown(allCases, .) %>% 
+      ComputeExpectedValues(treatmentAllocationProbs, newPatient_fullTrial, .) %>% 
+      ComputeImbalanceScores(., allTreatments )
+    
+    # Allocate treatment for new patient
+    newPatient_fullTrial$Treatment <- 
+      selectTreatment(ImbalanceScores, treatmentAllocationProbs,  dist_method, choice_method)
+    
+    patientList_fullTrial <- rbind(patientList_fullTrial, newPatient_fullTrial) 
+    
+  }
+  
+  return( patientList_fullTrial )
+  
+}
+
+oneTrial <- function( Params ) {
+  performOneTrial(200, Params[1], Params[2]) %>% 
+    mutate( nb_A_before = cumsum(Treatment=="A"), 
+            nb_B_before = cumsum(Treatment=="B"), 
+            prop_A_B_before = nb_A_before / nb_B_before, 
+            distParam = Params[1], 
+            choiceParam = Params[2] ) 
+    
+}
+
+test <- oneTrial( c("MAX", "BEST") )
+
+# Now visualize allocation proportion as a function of n
+theme_set(theme_bw())
+
+library(pbapply)
+
+# Create list of all possible randomization parameters
+allParams <- 
+  crossing( distParam = c("RANGE", "VAR", "MAX"), 
+            choiceParam = c("BEST", "PROB", "PROP")) %>% 
+  t() %>% 
+  as.data.frame(stringsAsFactors = FALSE) %>% 
+  as.list()
+
+test <- allParams %>% 
+  map_df( oneTrial )
+
+df_all <- pbreplicate(2, map_df(allParams, oneTrial), simplify = FALSE) %>% 
+  bind_rows( .id = "TrialIDX" ) 
+
+df_all1 <- pbreplicate(2, map_df(allParams, oneTrial), simplify = FALSE) %>% 
+  bind_rows( .id = "TrialIDX" ) 
+
+str(df_all)
+
+df_all %>%
+  mutate( TrialIDX = paste0( "0", as.numeric(TrialIDX) ) )%>% 
+  bind_rows(df_all1, .id = "Weight" ) %>% 
+  ggplot( aes( x = patientID, y = prop_A_B_before, 
+               group = TrialIDX, color = Weight ) ) +
+  stat_summary(fun.y = mean, geom="line") +
+  facet_grid(distParam~choiceParam) +
+  ylim(0, 5)
+
+
+
+
+
+
 
