@@ -51,15 +51,6 @@ allCases <-
     Treatment = allTreatments
     )
 
-patientList <- 
-  samplePatients(allCases, 100) 
-
-patientList$Treatment <- sample( allTreatments, 100, replace = TRUE, prob = allTreatmentsProbs )
-
-
-################################################################
-# Minimization algorithm - 2 treatments
-# TODO : generalize algorithm to more than 2 trts
 
 # define study-level parameters for randomization
 # Treatment allocation probabilities
@@ -70,51 +61,14 @@ treatmentAllocationProbs <-
   ) %>%  
   unnest()
 
-# Get weights for stratification factors into a vector for future use
-# TODO???
-
-# Create one new patient to be randomized
-newPatient <- samplePatients(allCases, 1) 
-
-ImbalanceScores <- patientList %>% 
-  ComputePatientListBreakdown(allCases, .) %>% 
-  ComputeExpectedValues(treatmentAllocationProbs, newPatient, .) %>% 
-  ComputeImbalanceScores(., allTreatments )
-
-# patientListBreakdown <- ComputePatientListBreakdown(allCases, patientList)
-# ExpectedValues <- ComputeExpectedValues(treatmentAllocationProbs, newPatient, patientListBreakdown)
-# ImbalanceScores <- ComputeImbalanceScores(ExpectedValues, allTreatments )
-
-
-# Test once
-allocatedNewPatient <- newPatient 
-allocatedNewPatient$Treatment <- selectTreatment(ImbalanceScores, "RANGE", "BEST")
-allocatedNewPatient$status <- "NEW"
-
-# Test 1000 times and plot histogram of treatment allocation
-replicate( 1000, selectTreatment(ImbalanceScores, "VAR", "PROP") ) %>% 
-  as.tibble() %>% 
-  ggplot( aes( x = value ) ) +
-  geom_bar()
-
-patientList %>% 
-  mutate( status = "OLD" ) %>% 
-  bind_rows(allocatedNewPatient) %>% 
-  ggplot( aes( x = Treatment, fill = Stage ) ) +
-  geom_bar( position = position_dodge() ) + 
-  facet_grid(status ~ EmergencyResection )
-
-# It looks like the OLD patient list is not properly stratified. This is normal, as it has been 
-# randomly created without stratification!!! To create a properly randomized patient list, randomization
-# would need to be used incrementally to built the list
-
-######### Build a virtual trial by incrementally randomizing randomly sampled patients
+## Build a virtual trial by incrementally randomizing randomly sampled patients ----
 
 performOneTrial <- function(nPatients, dist_method, choice_method) {
   
   # Create first patient and allocate treatment randomly (using the predefined ratio ebtween treatment groups)
   firstPatient_fullTrial <- samplePatients(allCases, 1) 
-  firstPatient_fullTrial$Treatment <- sample( allTreatments, 1, replace = TRUE, prob = allTreatmentsProbs )
+  firstPatient_fullTrial$Treatment <- 
+    sample( allTreatments, 1, replace = TRUE, prob = treatmentAllocationProbs_vec )
   
   patientList_fullTrial <- firstPatient_fullTrial
   
@@ -152,7 +106,11 @@ oneTrial <- function( Params ) {
     
 }
 
-test <- oneTrial( c("MAX", "BEST") )
+pbreplicate(10, oneTrial( c("MAX", "BEST") ), simplify = FALSE) %>% 
+  bind_rows( .id = "TrialIDX" ) %>% 
+  ggplot( aes( x = patientID, y = prop_A_B_before, group = TrialIDX ) ) +
+  geom_line() +
+  facet_grid(distParam~choiceParam) 
 
 # Now visualize allocation proportion as a function of n
 theme_set(theme_bw())
@@ -167,29 +125,35 @@ allParams <-
   as.data.frame(stringsAsFactors = FALSE) %>% 
   as.list()
 
-test <- allParams %>% 
-  map_df( oneTrial )
-
-df_all <- pbreplicate(2, map_df(allParams, oneTrial), simplify = FALSE) %>% 
+# TODO - here the two df are to test possible implementations of the 
+df_all <- pbreplicate(5, map_df(allParams, oneTrial), simplify = FALSE) %>% 
   bind_rows( .id = "TrialIDX" ) 
 
-df_all1 <- pbreplicate(2, map_df(allParams, oneTrial), simplify = FALSE) %>% 
+df_all1 <- pbreplicate(1, map_df(allParams, oneTrial), simplify = FALSE) %>% 
   bind_rows( .id = "TrialIDX" ) 
 
 str(df_all)
 
 df_all %>%
-  mutate( TrialIDX = paste0( "0", as.numeric(TrialIDX) ) )%>% 
-  bind_rows(df_all1, .id = "Weight" ) %>% 
-  ggplot( aes( x = patientID, y = prop_A_B_before, 
-               group = TrialIDX, color = Weight ) ) +
-  stat_summary(fun.y = mean, geom="line") +
+  # mutate( TrialIDX = paste0( "0", as.numeric(TrialIDX) ) )%>% 
+  # bind_rows(df_all1, .id = "Weight" ) %>% 
+  ggplot( aes( x = patientID, y = prop_A_B_before ) ) +
+  stat_summary(fun.data="mean_sdl", geom="ribbon", alpha = 0.2 ) +
+  stat_summary(fun.y=median, geom="line", color = "blue" ) +
   facet_grid(distParam~choiceParam) +
   ylim(0, 5)
 
 
+df_all1 %>%
+  ggplot( aes( x = patientID, y = prop_A_B_before, group = TrialIDX ) ) +
+  geom_line( alpha = I(0.3), size=0) +
+  facet_grid(distParam~choiceParam) +
+  ylim(0, 5)
 
-
+library(feather)
+path <- "rando_simResults.feather"
+write_feather(df_all, path)
+df_test <- read_feather(path)
 
 
 

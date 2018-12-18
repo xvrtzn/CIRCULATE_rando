@@ -105,8 +105,9 @@ selectTreatment <- function(ImbalanceScores, treatmentAllocationProbs, dist_meth
       dplyr::pull(Weight)
     
     # Choose the treatment with lowest imbalanced score, with fixed probablity 75%
-    # assignedTreatment <- sample( sortedTreatments, 1, prob = 0.75 * treatmentAllocationWeight  )
-    assignedTreatment <- sample( sortedTreatments, 1, prob = 0.75 * c(1,1)  )
+    # TODO - sort out if this is needed or not???
+    # assignedTreatment <- sample( sortedTreatments, 1, prob = c(0.75,0.25) * treatmentAllocationWeight  )
+    assignedTreatment <- sample( sortedTreatments, 1, prob = c(0.75,0.25)  )
     
   } else if (choice_method == "PROP") {
     
@@ -121,12 +122,19 @@ selectTreatment <- function(ImbalanceScores, treatmentAllocationProbs, dist_meth
 
     # Choose the treatment with lowest imbalanced score, with weighted probablity
     
-    # assignedTreatment <- sample( sortedTreatments, 1, 
-    #                              prob =  (1 - sortedScores / sum(sortedScores)) * treatmentAllocationWeight
-    # )
-    assignedTreatment <- sample( sortedTreatments, 1, 
-                                 prob =  (1 - sortedScores / sum(sortedScores)) 
+    # TODO - sort out if this is needed or not???
+    assignedTreatment <- sample( sortedTreatments, 1,
+                                 prob =  (1 - sortedScores / sum(sortedScores)) * treatmentAllocationWeight
     )
+    # assignedTreatment <- sample( sortedTreatments, 1, 
+    #                              prob =  (1 - sortedScores / sum(sortedScores)) 
+    # )
+    # TODO - Modifier pour inclure la pondération du vecteur de imbalanceScores par treatmentAllocationWeight
+    # Voir postit 14/12/2018 Pk = 1/(K-1)*(1-AkSk/somme(AiSi))
+    assignedTreatment <- sample( sortedTreatments, 1,
+                                 prob =  (1 - sortedScores / sum(sortedScores)) * treatmentAllocationWeight
+    )
+    
     
   } else {
     
