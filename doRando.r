@@ -155,5 +155,8 @@ path <- "rando_simResults.feather"
 write_feather(df_all, path)
 df_test <- read_feather(path)
 
+# Code to load data on laptop
+saveRDS(df_test, "rando_simResults.Rds")
+df_test_rds = readRDS("rando_simResults.Rds")
 
 
