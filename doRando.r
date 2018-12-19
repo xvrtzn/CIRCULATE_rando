@@ -20,9 +20,12 @@
 # Method as described in https://www.lexjansen.com/nesug/nesug04/ap/ap07.pdf
 
 library(tidyverse)
+library(pbapply) # Apply with progress bar
+
+# Global parameters 
+theme_set(theme_bw())
 
 # create seed for program to be rerun with same results
-# TODO :  must be returned as well
 set.seed(42)
 
 # Reinitialize random seed
@@ -32,10 +35,11 @@ set.seed(42)
 source("randoUtils.r")
 
 
-###########################
+## Liste des paramètres pour l'étude CIRCULATE ------
 
 numberOfCenters <- 100
 allTreatments <- c("A", "B")
+nbTreatments <- length(allTreatments)
 allCenters <- sprintf("Center%03d", as.numeric(1:numberOfCenters))
 allStages <- c("T3", "T4a")
 allEmergencyResections <- c("Yes", "No")
@@ -56,8 +60,8 @@ allCases <-
 # Treatment allocation probabilities
 treatmentAllocationProbs <- 
   tribble(
-    ~Treatment, ~Weight, 
-    allTreatments, treatmentAllocationProbs_vec
+    ~Treatment, ~Weight, ~Odds,
+    allTreatments, treatmentAllocationProbs_vec, treatmentAllocationOdds
   ) %>%  
   unnest()
 
@@ -66,7 +70,7 @@ treatmentAllocationProbs <-
 performOneTrial <- function(nPatients, dist_method, choice_method) {
   
   # Create first patient and allocate treatment randomly (using the predefined ratio ebtween treatment groups)
-  firstPatient_fullTrial <- samplePatients(allCases, 1) 
+  firstPatient_fullTrial <- samplePatients(1, allCases) 
   firstPatient_fullTrial$Treatment <- 
     sample( allTreatments, 1, replace = TRUE, prob = treatmentAllocationProbs_vec )
   
@@ -75,14 +79,14 @@ performOneTrial <- function(nPatients, dist_method, choice_method) {
   for (idx in 1:(nPatients-1)) {
     
     # Create new patient
-    newPatient_fullTrial <- samplePatients(allCases, 1) %>% 
+    newPatient_fullTrial <- samplePatients(1, allCases) %>% 
       mutate( patientID = max(patientList_fullTrial$patientID) + 1 )
     
     # Compute imabalance scores for new patient
     ImbalanceScores <- patientList_fullTrial %>% 
-      ComputePatientListBreakdown(allCases, .) %>% 
-      ComputeExpectedValues(treatmentAllocationProbs, newPatient_fullTrial, .) %>% 
-      ComputeImbalanceScores(., allTreatments )
+      ComputePatientListBreakdown(allCases) %>% 
+      ComputeExpectedValues(treatmentAllocationProbs, newPatient_fullTrial) %>% 
+      ComputeImbalanceScores(allTreatments )
     
     # Allocate treatment for new patient
     newPatient_fullTrial$Treatment <- 
@@ -106,17 +110,16 @@ oneTrial <- function( Params ) {
     
 }
 
-pbreplicate(10, oneTrial( c("MAX", "BEST") ), simplify = FALSE) %>% 
-  bind_rows( .id = "TrialIDX" ) %>% 
-  ggplot( aes( x = patientID, y = prop_A_B_before, group = TrialIDX ) ) +
-  geom_line() +
-  facet_grid(distParam~choiceParam) 
-
 # Now visualize allocation proportion as a function of n
-theme_set(theme_bw())
+# Visualize 10 replications of one given set of parameters
+pbreplicate(3, oneTrial( c("MAX", "PROP") ), simplify = FALSE) %>% 
+  bind_rows( .id = "TrialIDX" ) %>% 
+  ggplot( aes( x = patientID, y = prop_A_B_before, group = TrialIDX, color = Stage ) ) +
+  geom_line() +
+  facet_grid(distParam+Stage~choiceParam+EmergencyResection) +
+  ylim(0, 5)
 
-library(pbapply)
-
+# Create complete simulation with all combinations of parameters
 # Create list of all possible randomization parameters
 allParams <- 
   crossing( distParam = c("RANGE", "VAR", "MAX"), 
@@ -125,15 +128,17 @@ allParams <-
   as.data.frame(stringsAsFactors = FALSE) %>% 
   as.list()
 
-# TODO - here the two df are to test possible implementations of the 
 df_all <- pbreplicate(5, map_df(allParams, oneTrial), simplify = FALSE) %>% 
   bind_rows( .id = "TrialIDX" ) 
 
-df_all1 <- pbreplicate(1, map_df(allParams, oneTrial), simplify = FALSE) %>% 
-  bind_rows( .id = "TrialIDX" ) 
+# View all data
+df_all %>%
+  ggplot( aes( x = patientID, y = prop_A_B_before, group = TrialIDX ) ) +
+  geom_line( alpha = I(0.3), size=0) +
+  facet_grid(distParam+Stage~choiceParam+EmergencyResection) +
+  ylim(0, 5)
 
-str(df_all)
-
+# Try summarising to enhance visualization - not great yet
 df_all %>%
   # mutate( TrialIDX = paste0( "0", as.numeric(TrialIDX) ) )%>% 
   # bind_rows(df_all1, .id = "Weight" ) %>% 
@@ -143,20 +148,10 @@ df_all %>%
   facet_grid(distParam~choiceParam) +
   ylim(0, 5)
 
-
-df_all1 %>%
-  ggplot( aes( x = patientID, y = prop_A_B_before, group = TrialIDX ) ) +
-  geom_line( alpha = I(0.3), size=0) +
-  facet_grid(distParam~choiceParam) +
-  ylim(0, 5)
-
-library(feather)
-path <- "rando_simResults.feather"
-write_feather(df_all, path)
-df_test <- read_feather(path)
-
 # Code to load data on laptop
-saveRDS(df_test, "rando_simResults.Rds")
-df_test_rds = readRDS("rando_simResults.Rds")
+saveRDS(df_all, "rando_simResults.Rds")
+# df_test_rds = readRDS("rando_simResults.Rds")
 
 
+sortedImbalanceScores %>% 
+  mutate( test = Weight / sum(Weight) )

@@ -2,7 +2,7 @@
 # Generate a random list of n patients already allocated with a treatment 
 # Treatment are randomly allocated with unbalanced probs (not proper randomization but this is a start)
 
-samplePatients <- function( allCases, n = 1 ) {
+samplePatients <- function( n = 1, allCases ) {
   allCases %>% 
     dplyr::select(-Treatment) %>% 
     sample_n( n, replace = TRUE ) %>% 
@@ -17,7 +17,7 @@ samplePatients <- function( allCases, n = 1 ) {
 
 # Create Table 3 - Breakdown of patient list before randomization 
 # of new patient (complete with cases not seen before)
-ComputePatientListBreakdown <- function(allCases, patientList) {
+ComputePatientListBreakdown <- function(patientList, allCases) {
   allCases %>% 
     left_join(patientList, by = names(allCases)) %>% 
     gather( key = "key", value = "value", -patientID, -Treatment ) %>% 
@@ -27,7 +27,7 @@ ComputePatientListBreakdown <- function(allCases, patientList) {
 
 
 # Create Tables 7 and 8 - expected values only
-ComputeExpectedValues <- function(treatmentAllocationProbs, newPatient, patientListBreakdown) {
+ComputeExpectedValues <- function(patientListBreakdown, treatmentAllocationProbs, newPatient) {
   
   newPatient %>% 
     select( -patientID ) %>% 
@@ -100,13 +100,7 @@ selectTreatment <- function(ImbalanceScores, treatmentAllocationProbs, dist_meth
       arrange(imbalanceScore)  %>% 
       dplyr::pull(newTreatment)
     
-    treatmentAllocationWeight <- reducedImbalanceScores %>% 
-      arrange(imbalanceScore)  %>% 
-      dplyr::pull(Weight)
-    
     # Choose the treatment with lowest imbalanced score, with fixed probablity 75%
-    # TODO - sort out if this is needed or not???
-    # assignedTreatment <- sample( sortedTreatments, 1, prob = c(0.75,0.25) * treatmentAllocationWeight  )
     assignedTreatment <- sample( sortedTreatments, 1, prob = c(0.75,0.25)  )
     
   } else if (choice_method == "PROP") {
@@ -114,26 +108,20 @@ selectTreatment <- function(ImbalanceScores, treatmentAllocationProbs, dist_meth
     # print("PROP method chosen")
     
     sortedImbalanceScores <- reducedImbalanceScores %>% 
+      # TrtAllocProbxxx = ( 1 / ( nbTreatments - 1 ) ) * ( 1 - (imbalanceScore * Odds) / sum(imbalanceScore * Odds) ) 
+      mutate( Weight_inverseImbalanceScores =  1 - imbalanceScore / sum(imbalanceScore), 
+              Weight_Odds = Weight_inverseImbalanceScores * Odds,  
+              TrtAllocProb = Weight_Odds / sum(Weight_Odds) ) %>% # Normalize to transform into probability
       arrange(imbalanceScore)  
+      
     
     sortedTreatments <- dplyr::pull(sortedImbalanceScores, newTreatment)
-    sortedScores <- dplyr::pull(sortedImbalanceScores, imbalanceScore)
-    treatmentAllocationWeight <- dplyr::pull(sortedImbalanceScores, Weight)
+    TrtAllocProb <- dplyr::pull(sortedImbalanceScores, TrtAllocProb)
+    
+    # browser()
 
     # Choose the treatment with lowest imbalanced score, with weighted probablity
-    
-    # TODO - sort out if this is needed or not???
-    assignedTreatment <- sample( sortedTreatments, 1,
-                                 prob =  (1 - sortedScores / sum(sortedScores)) * treatmentAllocationWeight
-    )
-    # assignedTreatment <- sample( sortedTreatments, 1, 
-    #                              prob =  (1 - sortedScores / sum(sortedScores)) 
-    # )
-    # TODO - Modifier pour inclure la pondération du vecteur de imbalanceScores par treatmentAllocationWeight
-    # Voir postit 14/12/2018 Pk = 1/(K-1)*(1-AkSk/somme(AiSi))
-    assignedTreatment <- sample( sortedTreatments, 1,
-                                 prob =  (1 - sortedScores / sum(sortedScores)) * treatmentAllocationWeight
-    )
+    assignedTreatment <- sample( sortedTreatments, 1, prob =  TrtAllocProb )
     
     
   } else {
