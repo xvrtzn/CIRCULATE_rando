@@ -110,6 +110,8 @@ oneTrial <- function( Params ) {
     
 }
 
+test_oneTrial <- oneTrial( c("MAX", "PROP") )
+
 # Now visualize allocation proportion as a function of n
 # Visualize 10 replications of one given set of parameters
 pbreplicate(3, oneTrial( c("MAX", "PROP") ), simplify = FALSE) %>% 
@@ -131,11 +133,14 @@ allParams <-
 df_all <- pbreplicate(5, map_df(allParams, oneTrial), simplify = FALSE) %>% 
   bind_rows( .id = "TrialIDX" ) 
 
-# View all data
+# View all data - facet by Minimization methods + stratification factors
 df_all %>%
-  ggplot( aes( x = patientID, y = prop_A_B_before, group = TrialIDX ) ) +
-  geom_line( alpha = I(0.3), size=0) +
-  facet_grid(distParam+Stage~choiceParam+EmergencyResection) +
+  ggplot( aes( x = patientID, 
+               y = prop_A_B_before, 
+               group = TrialIDX ) ) +
+  geom_line( alpha = I(0.3), size=1) +
+  facet_grid( distParam + Stage ~ choiceParam + EmergencyResection ) +
+  # facet_grid( distParam  ~ choiceParam  ) +
   ylim(0, 5)
 
 # Try summarising to enhance visualization - not great yet
@@ -149,9 +154,6 @@ df_all %>%
   ylim(0, 5)
 
 # Code to load data on laptop
-saveRDS(df_all, "rando_simResults.Rds")
-# df_test_rds = readRDS("rando_simResults.Rds")
+# saveRDS(df_all, "rando_simResults.Rds")
+df_all = readRDS("rando_simResults.Rds")
 
-
-sortedImbalanceScores %>% 
-  mutate( test = Weight / sum(Weight) )

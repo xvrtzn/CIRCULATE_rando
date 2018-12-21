@@ -108,7 +108,6 @@ selectTreatment <- function(ImbalanceScores, treatmentAllocationProbs, dist_meth
     # print("PROP method chosen")
     
     sortedImbalanceScores <- reducedImbalanceScores %>% 
-      # TrtAllocProbxxx = ( 1 / ( nbTreatments - 1 ) ) * ( 1 - (imbalanceScore * Odds) / sum(imbalanceScore * Odds) ) 
       mutate( Weight_inverseImbalanceScores =  1 - imbalanceScore / sum(imbalanceScore), 
               Weight_Odds = Weight_inverseImbalanceScores * Odds,  
               TrtAllocProb = Weight_Odds / sum(Weight_Odds) ) %>% # Normalize to transform into probability
@@ -118,12 +117,9 @@ selectTreatment <- function(ImbalanceScores, treatmentAllocationProbs, dist_meth
     sortedTreatments <- dplyr::pull(sortedImbalanceScores, newTreatment)
     TrtAllocProb <- dplyr::pull(sortedImbalanceScores, TrtAllocProb)
     
-    # browser()
-
     # Choose the treatment with lowest imbalanced score, with weighted probablity
     assignedTreatment <- sample( sortedTreatments, 1, prob =  TrtAllocProb )
-    
-    
+
   } else {
     
     print("Unknown method to choose treatment")
